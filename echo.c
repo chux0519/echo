@@ -66,6 +66,23 @@ static void accept_conn_cb(struct evconnlistener *listener, int fd,
   bufferevent_enable(bev, EV_READ);
 }
 
+static void udp_readcb(int fd, short event, void *ctx) {
+  struct event *evt = ctx;
+
+  char buf[4096];
+  socklen_t size = sizeof(struct sockaddr);
+  struct sockaddr_in client_addr = {0};
+  int len =
+      recvfrom(fd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &size);
+  if (0 == len) {
+    fprintf(stderr, "connection closed\n");
+    event_free(evt);
+    evt = NULL;
+  } else if (len > 0) {
+    sendto(fd, buf, len, 0, (struct sockaddr *)&client_addr, size);
+  }
+}
+
 int main(int argc, char **argv) {
   int opt = 0;
   int port = 10086;
@@ -124,7 +141,7 @@ int main(int argc, char **argv) {
 
   struct event_base *base;
   struct evconnlistener *listener;
-  struct evconnlistener *listener_udp;
+  struct event *udp_event = NULL;
 
   base = event_base_new();
   if (!base) {
@@ -137,11 +154,10 @@ int main(int argc, char **argv) {
                          LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE, -1, fd_tcp);
   evconnlistener_set_error_cb(listener, accept_error_cb);
 
-  // listener_udp =
-  //    evconnlistener_new(base, accept_conn_cb, base,
-  //                       LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE, -1,
-  //                       fd_udp);
-  // evconnlistener_set_error_cb(listener_udp, accept_error_cb);
+  // for udp, construct event and add that by hand
+  udp_event =
+      event_new(base, fd_udp, EV_READ | EV_PERSIST, udp_readcb, udp_event);
+  event_add(udp_event, NULL);
 
   if (!listener) {
     fprintf(stderr, "Could not create a listener!\n");
@@ -154,11 +170,11 @@ int main(int argc, char **argv) {
 
   evconnlistener_free(listener);
 
-  evconnlistener_free(listener_udp);
+  if (fd_udp != 0)
+    close(fd_udp);
 
   event_base_free(base);
 
   printf("done\n");
-  return 0;
   return 0;
 }
